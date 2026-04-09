@@ -4,11 +4,14 @@
 # This script performs propensity score weighting and consent weighting
 # on multiply imputed datasets in separate, verifiable steps.
 #
-# Required packages: data.table, mice
+# Required packages: data.table, mice, lme4, pbapply, optimx
 # =============================================================================
 
 library(data.table)
 library(mice)
+library(lme4)
+library(pbapply)
+library(optimx)
 
 # =============================================================================
 # STEP 1: Extract imputed datasets from mice object
@@ -244,6 +247,142 @@ run_full_pipeline <- function(mids_object, consent_ids) {
   message("Pipeline complete!")
   return(implist)
 }
+
+# =============================================================================
+# STEP 11: Reshape wide format to long format
+# =============================================================================
+# Transpose wide format data into long format for longitudinal analysis
+# Input: dt (data.table in wide format)
+# Output: data.table in long format with wave variable
+
+reshape_wide_to_long <- function(dt) {
+  dt <- copy(dt)
+  setDT(dt)
+  
+  dflong <- melt(
+    dt,
+    id.vars = c("pidp", "iptwt0", "iptwt0t1", "hsu", "age", "t0mhs", "sex", "consent"),
+    measure = patterns(
+      ghq = "^ghq_scale9$|^ghq_scale10$|^ghq_scale11$",
+      isolation = "^scisolate9$|^scisolate10$|^scisolate11$",
+      mcs = "^sf12_mcs9$|^sf12_mcs10$|^sf12_mcs11$",
+      pcs = "^sf12_pcs9$|^sf12_pcs10$|^sf12_pcs11$",
+      life = "^life_satisf9$|^life_satisf10$|^life_satisf11$",
+      health = "^health_satisf9$|^health_satisf10$|^health_satisf11$"
+    ),
+    variable.name = "wave"
+  )
+  
+  # Convert wave to numeric (0, 1, 2) and add quadratic term
+  dflong[, wave := as.numeric(wave) - 1]
+  dflong[, wave2 := wave^2]
+  
+  return(dflong[])
+}
+
+# Usage:
+# implong <- lapply(implist, reshape_wide_to_long)
+
+# =============================================================================
+# STEP 12: Fit mixed models across imputed datasets
+# =============================================================================
+# Run linear mixed effects models on each imputed dataset
+# Input: data_list (list of data.tables), formula (lmer formula),
+#        use_consent_only (whether to subset to consenters),
+#        weights_col (column name for weights)
+# Output: list of lmer model objects
+
+fit_mixed_models <- function(data_list, 
+                             formula, 
+                             use_consent_only = TRUE,
+                             weights_col = "iptwt0t1") {
+  
+  model_outputs <- pblapply(data_list, function(dt) {
+    # Subset to consenters if requested
+    if (use_consent_only) {
+      dt <- dt[consent == 1]
+    }
+    
+    # Fit mixed model with weights
+    mod <- lmer(
+      formula, 
+      data = dt,
+      weights = dt[[weights_col]],
+      control = lmerControl(
+        optimizer = "optimx", 
+        optCtrl = list(method = "nlminb")
+      )
+    )
+    
+    return(mod)
+  })
+  
+  return(model_outputs)
+}
+
+# Usage:
+# formula <- ghq ~ 1 + wave * t0mhs + (1 | pidp)
+# formula <- ghq ~ 1 + (wave + wave2) * t0mhs + (1 | pidp)
+# output <- fit_mixed_models(implong, formula)
+
+# =============================================================================
+# STEP 13: Pool results using Rubin's rules
+# =============================================================================
+# Pool mixed model results across imputed datasets
+# Input: model_list (list of lmer model objects)
+# Output: pooled results summary with confidence intervals
+
+pool_mixed_model_results <- function(model_list) {
+  # Convert to mira object for pooling
+  mira_object <- as.mira(model_list)
+  
+  # Pool using Rubin's rules and return summary with CIs
+  pooled <- pool(mira_object)
+  result <- summary(pooled, conf.int = TRUE)
+  
+  return(result)
+}
+
+# Usage:
+# pooled_results <- pool_mixed_model_results(output)
+# print(pooled_results)
+
+# =============================================================================
+# ANALYSIS PIPELINE (Steps 11-13)
+# =============================================================================
+# Run longitudinal analysis pipeline after weighting steps
+
+run_analysis_pipeline <- function(implist, 
+                                  formula,
+                                  use_consent_only = TRUE,
+                                  weights_col = "iptwt0t1") {
+  
+  message("Step 11: Reshaping to long format...")
+  implong <- lapply(implist, reshape_wide_to_long)
+  
+  message("Step 12: Fitting mixed models...")
+  models <- fit_mixed_models(
+    implong, 
+    formula, 
+    use_consent_only = use_consent_only,
+    weights_col = weights_col
+  )
+  
+  message("Step 13: Pooling results...")
+  pooled_results <- pool_mixed_model_results(models)
+  
+  message("Analysis complete!")
+  return(list(
+    long_data = implong,
+    models = models,
+    pooled_results = pooled_results
+  ))
+}
+
+# Usage:
+# formula <- ghq ~ 1 + wave * t0mhs + (1 | pidp)
+# results <- run_analysis_pipeline(implist, formula)
+# print(results$pooled_results)
 
 # =============================================================================
 # EXAMPLE USAGE (Step-by-step verification)

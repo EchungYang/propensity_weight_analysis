@@ -1,11 +1,12 @@
 # Propensity Weight Analysis
 
-This repository contains R code for performing propensity score weighting and consent weighting on multiply imputed datasets.
+This repository contains R code for performing propensity score weighting and consent weighting on multiply imputed datasets, followed by longitudinal mixed model analysis.
 
 ## Overview
 
-The analysis pipeline consists of 10 modular, verifiable steps:
+The analysis pipeline consists of 13 modular, verifiable steps:
 
+### Weighting Pipeline (Steps 1-10)
 1. **Extract imputed datasets** - Convert mice object to list of data.tables
 2. **Add consent indicator** - Mark participants who consented for data linkage
 3. **Filter pre-COVID** - Keep only pre-COVID observations
@@ -17,11 +18,19 @@ The analysis pipeline consists of 10 modular, verifiable steps:
 9. **Calculate stabilized IPTW** - Inverse probability of treatment weights
 10. **Combine weights** - Multiply IPTW by IPCW
 
+### Analysis Pipeline (Steps 11-13)
+11. **Reshape to long format** - Wide to long transformation for longitudinal analysis
+12. **Fit mixed models** - Linear mixed effects models across imputed datasets
+13. **Pool results** - Combine estimates using Rubin's rules
+
 ## Requirements
 
 ```r
 library(data.table)
 library(mice)
+library(lme4)
+library(pbapply)
+library(optimx)
 ```
 
 ## Usage
@@ -48,6 +57,35 @@ implist <- lapply(implist, add_consent_indicator, consent_ids = consent)
 source("propensity_weight_analysis.R")
 
 implist <- run_full_pipeline(imp1, consent)
+```
+
+## Longitudinal Analysis (Steps 11-13)
+
+After computing weights, reshape and fit mixed models:
+
+### Step-by-step
+
+```r
+# Step 11: Reshape to long format
+implong <- lapply(implist, reshape_wide_to_long)
+print(head(implong[[1]]))
+
+# Step 12: Fit mixed models
+formula <- ghq ~ 1 + wave * t0mhs + (1 | pidp)
+# Or quadratic: ghq ~ 1 + (wave + wave2) * t0mhs + (1 | pidp)
+models <- fit_mixed_models(implong, formula)
+
+# Step 13: Pool results
+pooled_results <- pool_mixed_model_results(models)
+print(pooled_results)
+```
+
+### Full analysis pipeline
+
+```r
+formula <- ghq ~ 1 + wave * t0mhs + (1 | pidp)
+results <- run_analysis_pipeline(implist, formula)
+print(results$pooled_results)
 ```
 
 ## Customizing Formulas
@@ -79,3 +117,16 @@ After running the pipeline, each dataset includes:
 | `pt0` | Marginal probability of T0 treatment |
 | `iptwt0` | Stabilized IPTW for T0 |
 | `iptwt0t1` | Combined weight (IPTW × IPCW) |
+
+### After reshape (long format)
+
+| Variable | Description |
+|----------|-------------|
+| `wave` | Time wave (0, 1, 2) |
+| `wave2` | Wave squared (for quadratic models) |
+| `ghq` | GHQ score at each wave |
+| `isolation` | Social isolation at each wave |
+| `mcs` | SF-12 mental component score at each wave |
+| `pcs` | SF-12 physical component score at each wave |
+| `life` | Life satisfaction at each wave |
+| `health` | Health satisfaction at each wave |
