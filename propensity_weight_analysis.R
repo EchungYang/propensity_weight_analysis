@@ -388,6 +388,131 @@ run_analysis_pipeline <- function(implist,
 # print(results$pooled_results)
 
 # =============================================================================
+# STEP 14: Run multi-outcome analysis
+# =============================================================================
+# Run mixed model analysis for multiple outcomes at once
+# Input: implong (list of data.tables in long format), 
+#        outcomes (character vector of outcome variable names),
+#        predictors (character string of RHS of formula without outcome),
+#        use_consent_only (whether to subset to consenters),
+#        weights_col (column name for weights)
+# Output: named list of pooled results for each outcome
+
+run_multi_outcome_analysis <- function(implong,
+                                       outcomes = c("ghq", "mcs", "pcs", "life"),
+                                       predictors = "1 + wave * t0mhs + (1 | pidp)",
+                                       use_consent_only = TRUE,
+                                       weights_col = "iptwt0t1") {
+  
+  results <- lapply(setNames(outcomes, outcomes), function(outcome) {
+    message(paste("Analyzing outcome:", outcome))
+    
+    # Build formula dynamically
+    formula <- as.formula(paste(outcome, "~", predictors))
+    
+    # Fit models across imputed datasets
+    models <- fit_mixed_models(
+      implong, 
+      formula, 
+      use_consent_only = use_consent_only,
+      weights_col = weights_col
+    )
+    
+    # Pool results
+    pooled <- pool_mixed_model_results(models)
+    pooled$outcome <- outcome
+    
+    return(list(
+      formula = formula,
+      models = models,
+      pooled = pooled
+    ))
+  })
+  
+  message("All outcomes analyzed!")
+  return(results)
+}
+
+# Usage:
+# implong <- lapply(implist, reshape_wide_to_long)
+# results <- run_multi_outcome_analysis(implong)
+# results$ghq$pooled   # GHQ results
+# results$mcs$pooled   # MCS results
+# results$pcs$pooled   # PCS results
+# results$life$pooled  # Life satisfaction results
+
+# =============================================================================
+# STEP 15: Combine and export pooled results
+# =============================================================================
+# Combine pooled results from multiple outcomes into a single data.frame
+# Input: multi_results (output from run_multi_outcome_analysis)
+# Output: combined data.frame with outcome column
+
+combine_pooled_results <- function(multi_results) {
+  combined <- do.call(rbind, lapply(names(multi_results), function(name) {
+    df <- multi_results[[name]]$pooled
+    df$outcome <- name
+    return(df)
+  }))
+  
+  # Reorder columns to put outcome first
+  cols <- c("outcome", setdiff(names(combined), "outcome"))
+  combined <- combined[, cols]
+  
+  return(combined)
+}
+
+# Usage:
+# combined_results <- combine_pooled_results(results)
+# print(combined_results)
+
+# =============================================================================
+# FULL MULTI-OUTCOME PIPELINE
+# =============================================================================
+# Complete pipeline from weighted data to pooled multi-outcome results
+
+run_full_analysis <- function(implist,
+                              outcomes = c("ghq", "mcs", "pcs", "life"),
+                              predictors = "1 + wave * t0mhs + (1 | pidp)",
+                              use_consent_only = TRUE,
+                              weights_col = "iptwt0t1") {
+  
+  message("Step 11: Reshaping to long format...")
+  implong <- lapply(implist, reshape_wide_to_long)
+  
+  message("Step 14: Running multi-outcome analysis...")
+  multi_results <- run_multi_outcome_analysis(
+    implong,
+    outcomes = outcomes,
+    predictors = predictors,
+    use_consent_only = use_consent_only,
+    weights_col = weights_col
+  )
+  
+  message("Step 15: Combining results...")
+  combined <- combine_pooled_results(multi_results)
+  
+  message("Analysis complete!")
+  return(list(
+    long_data = implong,
+    by_outcome = multi_results,
+    combined = combined
+  ))
+}
+
+# Usage:
+# # Linear model
+# results <- run_full_analysis(implist)
+# print(results$combined)
+#
+# # Quadratic model
+# results_quad <- run_full_analysis(
+#   implist,
+#   predictors = "1 + (wave + wave2) * t0mhs + (1 | pidp)"
+# )
+# print(results_quad$combined)
+
+# =============================================================================
 # EXAMPLE USAGE (Step-by-step verification)
 # =============================================================================
 # 
