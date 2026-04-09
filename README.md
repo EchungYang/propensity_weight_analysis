@@ -56,7 +56,7 @@ Both propensity and consent models accept custom formulas:
 
 ```r
 # Custom propensity formula
-custom_ps_formula <- t0mhs ~ age + ghq_scale9 + sf12_pcs9 + sf12_mcs9
+custom_ps_formula <- t0mhs ~ age + sf12_pcs9 + sf12_mcs9 + lt_sick9
 implist <- lapply(implist, fit_propensity_model, formula = custom_ps_formula)
 
 # Custom consent formula

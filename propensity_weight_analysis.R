@@ -49,7 +49,7 @@ add_consent_indicator <- function(dt, consent_ids) {
 # Output: filtered data.table
 
 filter_precovid <- function(dt) {
-
+  dt <- copy(dt)
   dt[precovid == TRUE]
 }
 
@@ -64,6 +64,7 @@ filter_precovid <- function(dt) {
 # Output: filtered data.table
 
 filter_mental_health_sample <- function(dt, ghq_threshold = 10) {
+  dt <- copy(dt)
   dt[ghq_scale8 > ghq_threshold | t0mhs == 1]
 }
 
@@ -112,7 +113,12 @@ create_interaction_term <- function(dt) {
 fit_propensity_model <- function(dt, formula = NULL) {
   dt <- copy(dt)
   
-  # Default formula for T0 MHS (with HSU removed)
+  # Default formula for T0 MHS propensity model
+
+  # Note: ghq_scale8 is intentionally excluded from the propensity model 
+  # because it is used as a selection criterion (GHQ > 10) in Step 4.
+  # Including it would cause near-collinearity issues. The model uses
+  # other health and socioeconomic predictors instead.
   if (is.null(formula)) {
     formula <- t0mhs ~ age + sf12_pcs9 + sf12_mcs9 +
       lt_sick9 + hh_size9 + totincome9 + scisolate9 + finnow9
