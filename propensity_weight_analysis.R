@@ -418,8 +418,9 @@ run_multi_outcome_analysis <- function(implong,
       weights_col = weights_col
     )
     
-    # Pool results
+    # Pool results and add outcome column
     pooled <- pool_mixed_model_results(models)
+    pooled <- as.data.frame(pooled)
     pooled$outcome <- outcome
     
     return(list(

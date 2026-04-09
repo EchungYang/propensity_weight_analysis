@@ -22,7 +22,7 @@ The analysis pipeline consists of 15 modular, verifiable steps:
 11. **Reshape to long format** - Wide to long transformation for longitudinal analysis
 12. **Fit mixed models** - Linear mixed effects models across imputed datasets
 13. **Pool results** - Combine estimates using Rubin's rules
-14. **Multi-outcome analysis** - Run analysis for multiple outcomes (GHQ, MCS, PCS, life) at once
+14. **Multi-outcome analysis** - Run analysis for multiple outcomes (GHQ, MCS, PCS, Life) at once
 15. **Combine results** - Merge all pooled results into a single table
 
 ## Requirements
