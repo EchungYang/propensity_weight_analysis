@@ -259,6 +259,8 @@ reshape_wide_to_long <- function(dt) {
   dt <- copy(dt)
   setDT(dt)
   
+  # Patterns use ^ and $ anchors to match exact column names only
+  # (e.g., matches "ghq_scale9" but not "ghq_scale9_extra")
   dflong <- melt(
     dt,
     id.vars = c("pidp", "iptwt0", "iptwt0t1", "hsu", "age", "t0mhs", "sex", "consent"),
@@ -273,7 +275,8 @@ reshape_wide_to_long <- function(dt) {
     variable.name = "wave"
   )
   
-  # Convert wave to numeric (0, 1, 2) and add quadratic term
+  # Convert wave from factor (1, 2, 3) to numeric (0, 1, 2) for modeling
+  # Wave 0 = baseline (wave 9), Wave 1 = follow-up 1, Wave 2 = follow-up 2
   dflong[, wave := as.numeric(wave) - 1]
   dflong[, wave2 := wave^2]
   
