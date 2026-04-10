@@ -4,7 +4,7 @@ This repository contains R code for performing propensity score weighting and co
 
 ## Overview
 
-The analysis pipeline consists of 15 modular, verifiable steps:
+The analysis pipeline consists of 16 modular, verifiable steps:
 
 ### Weighting Pipeline (Steps 1-10)
 1. **Extract imputed datasets** - Convert mice object to list of data.tables
@@ -18,12 +18,13 @@ The analysis pipeline consists of 15 modular, verifiable steps:
 9. **Calculate stabilized IPTW** - Inverse probability of treatment weights
 10. **Combine weights** - Multiply IPTW by IPCW
 
-### Analysis Pipeline (Steps 11-15)
+### Analysis Pipeline (Steps 11-16)
 11. **Reshape to long format** - Wide to long transformation for longitudinal analysis
 12. **Fit mixed models** - Linear mixed effects models across imputed datasets
 13. **Pool results** - Combine estimates using Rubin's rules
 14. **Multi-outcome analysis** - Run analysis for multiple outcomes (GHQ, MCS, PCS, Life) at once
 15. **Combine results** - Merge all pooled results into a single table
+16. **Plot weighted trajectories** - Visualise IPTW-weighted group means with pooled confidence intervals
 
 ## Requirements
 
@@ -147,6 +148,35 @@ multi_results <- run_multi_outcome_analysis(implong)
 combined <- combine_pooled_results(multi_results)
 print(combined)
 ```
+
+## Visualization (Step 16)
+
+Plot IPTW-weighted marginal mean trajectories for all outcomes, with pooled
+confidence intervals derived via Rubin's rules:
+
+```r
+# After the multi-outcome analysis
+implong      <- lapply(implist, reshape_wide_to_long)
+multi_results <- run_multi_outcome_analysis(implong)
+
+# Build one ggplot per outcome
+plots <- plot_weighted_trajectories(multi_results, implong)
+
+# Display individual plots
+plots$ghq    # GHQ trajectory
+plots$mcs    # MCS trajectory
+
+# Display all side-by-side (requires patchwork)
+# patchwork::wrap_plots(plots)
+```
+
+The function addresses three common pitfalls:
+
+| Problem | Solution |
+|---------|---------|
+| Confidence intervals absent | Derives `lower`/`upper` via `SE = sqrt(B * (1 + 1/m))` (Rubin's rules) and renders them as `geom_ribbon` |
+| Works for single outcome only | Iterates over `results$<outcome>$models` inside the nested multi-outcome list |
+| Baseline means not balanced | Uses `weighted.mean(pred, w = iptwt0t1)` so that IPTW-balanced group averages are displayed |
 
 ## Customizing Formulas
 

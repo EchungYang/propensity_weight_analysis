@@ -518,6 +518,136 @@ run_full_analysis <- function(implist,
 # print(results_quad$combined)
 
 # =============================================================================
+# STEP 16: Plot weighted trajectories from multi-outcome analysis
+# =============================================================================
+# Build weighted marginal-mean trajectory plots from run_multi_outcome_analysis()
+# output, with correct pooled confidence intervals.
+#
+# Three issues with a naive plotting approach are addressed here:
+#
+#   1. Confidence intervals: pooled SE uses Rubin's rules —
+#        SE = sd(Q_i) * sqrt(1 + 1/m)
+#      where Q_i is the per-imputation weighted mean and m is the number of
+#      imputations.  Simply dividing sd by sqrt(m) (the standard error of the
+#      sample mean) is not appropriate for multiply-imputed estimates.
+#
+#   2. Multi-outcome support: run_multi_outcome_analysis() returns a nested list
+#      results$<outcome>$models.  The models for each outcome must be iterated
+#      separately, matched to the corresponding implong datasets.
+#
+#   3. Weighted means: using mean(pred) ignores the IPTW weights and produces
+#      unbalanced group means at baseline.  weighted.mean(pred, w = <weights>)
+#      is used so that the weighted group means at wave 0 overlap as intended.
+#
+# Input:
+#   multi_results    – output of run_multi_outcome_analysis()
+#   implong          – list of long-format data.tables (one per imputation)
+#   outcomes         – character vector of outcomes to plot; defaults to all
+#   weights_col      – name of the weight column (default "iptwt0t1")
+#   use_consent_only – subset to consent == 1 before predicting (default TRUE)
+#   alpha            – significance level for confidence intervals (default 0.05)
+#
+# Output: named list of ggplot objects, one per outcome
+
+plot_weighted_trajectories <- function(multi_results,
+                                       implong,
+                                       outcomes = NULL,
+                                       weights_col = "iptwt0t1",
+                                       use_consent_only = TRUE,
+                                       alpha = 0.05) {
+  
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    stop("ggplot2 is required. Install it with install.packages('ggplot2').")
+  }
+  
+  if (is.null(outcomes)) outcomes <- names(multi_results)
+  z <- qnorm(1 - alpha / 2)
+  m <- length(implong)
+  
+  plot_list <- lapply(setNames(outcomes, outcomes), function(outcome) {
+    
+    models <- multi_results[[outcome]]$models
+    
+    if (length(models) != m) {
+      stop(paste0(
+        "Number of models (", length(models), ") does not match ",
+        "number of imputed datasets (", m, ") for outcome '", outcome, "'."
+      ))
+    }
+    
+    # --- per-imputation weighted means ---
+    pred_list <- mapply(function(mod, dt) {
+      dt <- copy(dt)
+      if (use_consent_only) dt <- dt[consent == 1]
+      
+      dt[, pred := predict(mod, newdata = dt, re.form = NA)]
+      
+      # weighted.mean ensures IPTW-balanced group averages at each wave,
+      # so that baseline means for treated / untreated overlap as expected
+      dt[, .(mean = weighted.mean(pred, w = get(weights_col))),
+         by = .(wave, t0mhs)]
+      
+    }, models, implong, SIMPLIFY = FALSE)
+    
+    pred_dt <- rbindlist(pred_list, idcol = "imp")
+    
+    # --- pool across imputations (Rubin's rules) ---
+    # Q_bar = mean of per-imputation estimates
+    # B     = between-imputation variance = var(Q_i)
+    # Total SE (no within-imputation component for cell means):
+    #   SE = sqrt(B * (1 + 1/m))
+    pooled_pred <- pred_dt[, {
+      Q_bar <- mean(mean)
+      B     <- var(mean)
+      se    <- sqrt(B * (1 + 1 / m))
+      .(
+        mean  = Q_bar,
+        se    = se,
+        lower = Q_bar - z * se,
+        upper = Q_bar + z * se
+      )
+    }, by = .(wave, t0mhs)]
+    
+    ggplot2::ggplot(
+      pooled_pred,
+      ggplot2::aes(
+        x      = wave,
+        y      = mean,
+        colour = factor(t0mhs),
+        fill   = factor(t0mhs)
+      )
+    ) +
+      ggplot2::geom_ribbon(
+        ggplot2::aes(ymin = lower, ymax = upper),
+        alpha  = 0.2,
+        colour = NA
+      ) +
+      ggplot2::geom_line() +
+      ggplot2::geom_point() +
+      ggplot2::labs(
+        title  = paste("Outcome:", outcome),
+        x      = "Time",
+        y      = "Weighted outcome",
+        colour = "Group",
+        fill   = "Group"
+      ) +
+      ggplot2::theme_minimal()
+  })
+  
+  return(plot_list)
+}
+
+# Usage:
+# implong  <- lapply(implist, reshape_wide_to_long)
+# results  <- run_multi_outcome_analysis(implong)
+# plots    <- plot_weighted_trajectories(results, implong)
+# plots$ghq   # GHQ trajectory plot
+# plots$mcs   # MCS trajectory plot
+#
+# To display all plots at once (requires patchwork):
+# # patchwork::wrap_plots(plots)
+
+# =============================================================================
 # EXAMPLE USAGE (Step-by-step verification)
 # =============================================================================
 # 
