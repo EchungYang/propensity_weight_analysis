@@ -4,7 +4,7 @@ This repository contains R code for performing propensity score weighting and co
 
 ## Overview
 
-The analysis pipeline consists of 16 modular, verifiable steps:
+The analysis pipeline consists of 17 modular, verifiable steps:
 
 ### Weighting Pipeline (Steps 1-10)
 1. **Extract imputed datasets** - Convert mice object to list of data.tables
@@ -18,13 +18,14 @@ The analysis pipeline consists of 16 modular, verifiable steps:
 9. **Calculate stabilized IPTW** - Inverse probability of treatment weights
 10. **Combine weights** - Multiply IPTW by IPCW
 
-### Analysis Pipeline (Steps 11-16)
+### Analysis Pipeline (Steps 11-17)
 11. **Reshape to long format** - Wide to long transformation for longitudinal analysis
 12. **Fit mixed models** - Linear mixed effects models across imputed datasets
 13. **Pool results** - Combine estimates using Rubin's rules
 14. **Multi-outcome analysis** - Run analysis for multiple outcomes (GHQ, MCS, PCS, Life) at once
 15. **Combine results** - Merge all pooled results into a single table
-16. **Plot weighted trajectories** - Visualise IPTW-weighted group means with pooled confidence intervals
+16. **Plot single outcome** - Visualise one IPTW-weighted trajectory directly from `fit_mixed_models()` output
+17. **Plot all outcomes** - Visualise all outcomes at once from `run_multi_outcome_analysis()` output
 
 ## Requirements
 
@@ -149,14 +150,35 @@ combined <- combine_pooled_results(multi_results)
 print(combined)
 ```
 
-## Visualization (Step 16)
+## Visualization (Steps 16–17)
 
-Plot IPTW-weighted marginal mean trajectories for all outcomes, with pooled
-confidence intervals derived via Rubin's rules:
+### Step 16: Plot a single outcome (simplest path)
+
+After fitting models for one outcome with `fit_mixed_models()`, call
+`plot_single_outcome()` to get the weighted trajectory plot immediately:
 
 ```r
-# After the multi-outcome analysis
-implong      <- lapply(implist, reshape_wide_to_long)
+implong <- lapply(implist, reshape_wide_to_long)
+
+formula <- ghq ~ 1 + wave * t0mhs + (1 | pidp)
+models  <- fit_mixed_models(implong, formula)
+
+# Verify pooled results
+pooled_results <- pool_mixed_model_results(models)
+print(pooled_results)
+
+# Plot weighted trajectory with confidence interval ribbon
+plot_single_outcome(models, implong, outcome_label = "ghq")
+```
+
+### Step 17: Plot all outcomes at once
+
+After running `run_multi_outcome_analysis()`, call `plot_weighted_trajectories()`
+to build one plot per outcome. Internally it calls `plot_single_outcome()` for
+each outcome:
+
+```r
+implong       <- lapply(implist, reshape_wide_to_long)
 multi_results <- run_multi_outcome_analysis(implong)
 
 # Build one ggplot per outcome
@@ -170,12 +192,12 @@ plots$mcs    # MCS trajectory
 # patchwork::wrap_plots(plots)
 ```
 
-The function addresses three common pitfalls:
+Both functions share the same three fixes:
 
 | Problem | Solution |
 |---------|---------|
 | Confidence intervals absent | Derives `lower`/`upper` via `SE = sqrt(B * (1 + 1/m))` (Rubin's rules) and renders them as `geom_ribbon` |
-| Works for single outcome only | Iterates over `results$<outcome>$models` inside the nested multi-outcome list |
+| Works for single outcome only | `plot_single_outcome()` accepts any flat model list; `plot_weighted_trajectories()` iterates over the nested multi-outcome structure |
 | Baseline means not balanced | Uses `weighted.mean(pred, w = iptwt0t1)` so that IPTW-balanced group averages are displayed |
 
 ## Customizing Formulas
