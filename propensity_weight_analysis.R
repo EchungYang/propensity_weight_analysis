@@ -306,14 +306,15 @@ fit_mixed_models <- function(data_list,
       dt <- dt[consent == 1]
     }
     
-    # Extract weights into a local variable so lmer can evaluate it correctly
-    wts <- dt[[weights_col]]
+    # lmer evaluates 'weights' against the data frame via eval(extras, data, env),
+    # so the weights must exist as a column in dt — a local variable is not enough.
+    dt[[".wts"]] <- dt[[weights_col]]
     
     # Fit mixed model with weights
     mod <- lmer(
       formula, 
       data = dt,
-      weights = wts,
+      weights = .wts,
       control = lmerControl(
         optimizer = "optimx", 
         optCtrl = list(method = "nlminb")
