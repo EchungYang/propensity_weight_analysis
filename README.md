@@ -1,1 +1,244 @@
-# propensity_weight_analysis
+# Propensity Weight Analysis
+
+This repository contains R code for performing propensity score weighting and consent weighting on multiply imputed datasets, followed by longitudinal mixed model analysis.
+
+## Overview
+
+The analysis pipeline consists of 17 modular, verifiable steps:
+
+### Weighting Pipeline (Steps 1-10)
+1. **Extract imputed datasets** - Convert mice object to list of data.tables
+2. **Add consent indicator** - Mark participants who consented for data linkage
+3. **Filter pre-COVID** - Keep only pre-COVID observations
+4. **Filter mental health sample** - Select mentally distressed (GHQ > 10) or MH service users
+5. **Process HSU** - Recode HSU to binary and remove HSU cases
+6. **Create interaction term** - Calculate age × GHQ interaction
+7. **Fit propensity model** - Logistic regression for treatment propensity
+8. **Fit consent model** - Logistic regression for consent weighting (IPCW)
+9. **Calculate stabilized IPTW** - Inverse probability of treatment weights
+10. **Combine weights** - Multiply IPTW by IPCW
+
+### Analysis Pipeline (Steps 11-17)
+11. **Reshape to long format** - Wide to long transformation for longitudinal analysis
+12. **Fit mixed models** - Linear mixed effects models across imputed datasets
+13. **Pool results** - Combine estimates using Rubin's rules
+14. **Multi-outcome analysis** - Run analysis for multiple outcomes (GHQ, MCS, PCS, Life) at once
+15. **Combine results** - Merge all pooled results into a single table
+16. **Plot single outcome** - Visualise one IPTW-weighted trajectory directly from `fit_mixed_models()` output
+17. **Plot all outcomes** - Visualise all outcomes at once from `run_multi_outcome_analysis()` output
+
+## Requirements
+
+```r
+library(data.table)
+library(mice)
+library(lme4)
+library(pbapply)
+library(optimx)
+```
+
+## Usage
+
+### Step-by-step verification
+
+```r
+source("propensity_weight_analysis.R")
+
+# Step 1: Extract datasets
+implist <- extract_imputed_datasets(imp1)
+print(paste("Number of datasets:", length(implist)))
+
+# Step 2: Add consent indicator
+implist <- lapply(implist, add_consent_indicator, consent_ids = consent)
+
+# Step 3-10: Continue with remaining steps...
+# (see propensity_weight_analysis.R for full example)
+```
+
+### Full pipeline
+
+```r
+source("propensity_weight_analysis.R")
+
+implist <- run_full_pipeline(imp1, consent)
+```
+
+## Longitudinal Analysis (Steps 11-13)
+
+After computing weights, reshape and fit mixed models:
+
+### Step-by-step
+
+```r
+# Step 11: Reshape to long format
+implong <- lapply(implist, reshape_wide_to_long)
+print(head(implong[[1]]))
+
+# Step 12: Fit mixed models
+formula <- ghq ~ 1 + wave * t0mhs + (1 | pidp)
+# Or quadratic: ghq ~ 1 + (wave + wave2) * t0mhs + (1 | pidp)
+models <- fit_mixed_models(implong, formula)
+
+# Step 13: Pool results
+pooled_results <- pool_mixed_model_results(models)
+print(pooled_results)
+```
+
+### Full analysis pipeline
+
+```r
+formula <- ghq ~ 1 + wave * t0mhs + (1 | pidp)
+results <- run_analysis_pipeline(implist, formula)
+print(results$pooled_results)
+```
+
+## Multi-Outcome Analysis (Steps 14-15)
+
+Run all four outcomes (GHQ, MCS, PCS, Life) at once:
+
+### Simple usage
+
+```r
+# After weighting pipeline
+implist <- run_full_pipeline(imp1, consent)
+
+# Run all outcomes with linear model
+results <- run_full_analysis(implist)
+
+# View combined results
+print(results$combined)
+
+# Access individual outcomes
+print(results$by_outcome$ghq$pooled)   # GHQ results
+print(results$by_outcome$mcs$pooled)   # MCS results
+print(results$by_outcome$pcs$pooled)   # PCS results
+print(results$by_outcome$life$pooled)  # Life satisfaction results
+```
+
+### Quadratic model
+
+```r
+results_quad <- run_full_analysis(
+  implist,
+  predictors = "1 + (wave + wave2) * t0mhs + (1 | pidp)"
+)
+print(results_quad$combined)
+```
+
+### Custom outcomes
+
+```r
+# Run only specific outcomes
+results <- run_full_analysis(
+  implist,
+  outcomes = c("ghq", "mcs"),  # Only GHQ and MCS
+  predictors = "1 + wave * t0mhs + (1 | pidp)"
+)
+```
+
+### Step-by-step multi-outcome
+
+```r
+# Step 11: Reshape
+implong <- lapply(implist, reshape_wide_to_long)
+
+# Step 14: Multi-outcome analysis
+multi_results <- run_multi_outcome_analysis(implong)
+
+# Step 15: Combine into single table
+combined <- combine_pooled_results(multi_results)
+print(combined)
+```
+
+## Visualization (Steps 16–17)
+
+### Step 16: Plot a single outcome (simplest path)
+
+After fitting models for one outcome with `fit_mixed_models()`, call
+`plot_single_outcome()` to get the weighted trajectory plot immediately:
+
+```r
+implong <- lapply(implist, reshape_wide_to_long)
+
+formula <- ghq ~ 1 + wave * t0mhs + (1 | pidp)
+models  <- fit_mixed_models(implong, formula)
+
+# Verify pooled results
+pooled_results <- pool_mixed_model_results(models)
+print(pooled_results)
+
+# Plot weighted trajectory with confidence interval ribbon
+plot_single_outcome(models, implong, outcome_label = "ghq")
+```
+
+### Step 17: Plot all outcomes at once
+
+After running `run_multi_outcome_analysis()`, call `plot_weighted_trajectories()`
+to build one plot per outcome. Internally it calls `plot_single_outcome()` for
+each outcome:
+
+```r
+implong       <- lapply(implist, reshape_wide_to_long)
+multi_results <- run_multi_outcome_analysis(implong)
+
+# Build one ggplot per outcome
+plots <- plot_weighted_trajectories(multi_results, implong)
+
+# Display individual plots
+plots$ghq    # GHQ trajectory
+plots$mcs    # MCS trajectory
+
+# Display all side-by-side (requires patchwork)
+# patchwork::wrap_plots(plots)
+```
+
+Both functions share the same three fixes:
+
+| Problem | Solution |
+|---------|---------|
+| Confidence intervals absent | Derives `lower`/`upper` via `SE = sqrt(B * (1 + 1/m))` (Rubin's rules) and renders them as `geom_ribbon` |
+| Works for single outcome only | `plot_single_outcome()` accepts any flat model list; `plot_weighted_trajectories()` iterates over the nested multi-outcome structure |
+| Baseline means not balanced | Uses `weighted.mean(pred, w = iptwt0t1)` so that IPTW-balanced group averages are displayed |
+
+## Customizing Formulas
+
+Both propensity and consent models accept custom formulas:
+
+```r
+# Custom propensity formula
+custom_ps_formula <- t0mhs ~ age + sf12_pcs9 + sf12_mcs9 + lt_sick9
+implist <- lapply(implist, fit_propensity_model, formula = custom_ps_formula)
+
+# Custom consent formula
+custom_consent_formula <- consent ~ age + totincome9 + imd_mean
+implist <- lapply(implist, fit_consent_model, formula = custom_consent_formula)
+```
+
+## Output Variables
+
+After running the pipeline, each dataset includes:
+
+| Variable | Description |
+|----------|-------------|
+| `consent` | Consent indicator (1 = consented, 0 = not) |
+| `int1` | Age × GHQ interaction term |
+| `pst0` | Propensity score for T0 treatment |
+| `p_consent` | Predicted probability of consent |
+| `pconsent` | Marginal probability of consent |
+| `ipcw` | Inverse probability of consent weight |
+| `pt0` | Marginal probability of T0 treatment |
+| `iptwt0` | Stabilized IPTW for T0 |
+| `iptwt0t1` | Combined weight (IPTW × IPCW) |
+
+### After reshape (long format)
+
+| Variable | Description |
+|----------|-------------|
+| `wave` | Time wave (0, 1, 2) |
+| `wave2` | Wave squared (for quadratic models) |
+| `ghq` | GHQ score at each wave |
+| `isolation` | Social isolation at each wave |
+| `mcs` | SF-12 mental component score at each wave |
+| `pcs` | SF-12 physical component score at each wave |
+| `life` | Life satisfaction at each wave |
+| `health` | Health satisfaction at each wave |
